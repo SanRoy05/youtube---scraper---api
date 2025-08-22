@@ -57,7 +57,7 @@ app.get("/search", async (req, res) => {
       }
     });
 
-    res.json(results.slice(0, 5)); // limit to 5 for faster response
+    res.json(results.slice(0, 20)); // return upto 20 response 
   } catch (e) {
     console.error("Scrape error:", e.message);
     res.status(500).json({ error: "Scrape failed or YouTube layout changed" });
