@@ -1,103 +1,116 @@
 import express from "express";
+import cors from "cors";
 import axios from "axios";
 import { load } from "cheerio";
-import cors from "cors";
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 
-app.get("/ping", (req, res) => {
-  res.status(200).json({ message: "API is alive" });
-});
-
-// Helper: convert "mm:ss" or "hh:mm:ss" into seconds
-function parseDuration(str) {
-  const parts = str.split(":").map(Number).reverse();
-  let seconds = 0;
-  if (parts[0]) seconds += parts[0];         // seconds
-  if (parts[1]) seconds += parts[1] * 60;    // minutes
-  if (parts[2]) seconds += parts[2] * 3600;  // hours
-  return seconds;
-}
-
+// 🔍 SEARCH API
 app.get("/search", async (req, res) => {
   const query = req.query.q;
-  if (!query) return res.status(400).json({ error: "Missing query" });
+  if (!query) return res.status(400).json({ error: "Missing search query" });
 
   try {
-    const html = await axios
-      .get(
-        `https://www.youtube.com/results?search_query=${encodeURIComponent(
-          query
-        )}`
-      )
-      .then((r) => r.data);
-
+    const response = await axios.get(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
+    );
+    const html = response.data;
     const $ = load(html);
-    let ytDataRaw = null;
 
+    let ytInitialData = null;
     $("script").each((_, el) => {
       const txt = $(el).html();
       if (txt && txt.includes("var ytInitialData")) {
-        try {
-          ytDataRaw =
-            txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
-        } catch (err) {
-          console.error("ytInitialData parse error");
+        ytInitialData = txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
+      }
+    });
+
+    if (!ytInitialData) return res.json([]);
+
+    const data = JSON.parse(ytInitialData);
+    const items =
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
+
+    const results = [];
+    items.forEach((item) => {
+      if (item.videoRenderer) {
+        const v = item.videoRenderer;
+        const lengthText = v.lengthText?.simpleText || "0:00";
+        const [m, s] = lengthText.split(":").map(Number);
+        const durationSec = (m || 0) * 60 + (s || 0);
+
+        // 🎵 only take proper songs, not shorts/reels
+        if (durationSec >= 60) {
+          results.push({
+            title: v.title?.runs?.[0]?.text || "",
+            videoId: v.videoId,
+            thumbnail: v.thumbnail?.thumbnails?.[0]?.url || "",
+          });
         }
       }
     });
 
-    if (!ytDataRaw) {
-      return res
-        .status(500)
-        .json({ error: "Failed to extract YouTube data" });
-    }
-
-    const data = JSON.parse(ytDataRaw);
-    const results = [];
-
-    function extractItems(items) {
-      items?.forEach((item) => {
-        if (item.videoRenderer) {
-          const v = item.videoRenderer;
-
-          // ✅ Only include if it has a duration AND is >= 60 seconds
-          if (v.lengthText) {
-            const durationText = v.lengthText.simpleText; // e.g. "3:45"
-            const totalSeconds = parseDuration(durationText);
-
-            if (totalSeconds >= 60) {
-              results.push({
-                title: v.title?.runs?.[0]?.text || "",
-                videoId: v.videoId,
-                thumbnail:
-                  v.thumbnail?.thumbnails?.slice(-1)[0]?.url || "",
-                duration: durationText, // keep if you want song length
-              });
-            }
-          }
-        }
-      });
-    }
-
-    // First batch of items
-    let items =
-      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-        ?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents;
-    extractItems(items);
-
-    // Return only the first 20 valid songs
-    res.json(results.slice(0, 20));
-  } catch (e) {
-    console.error("Scrape error:", e.message);
-    res
-      .status(500)
-      .json({ error: "Scrape failed or YouTube layout changed" });
+    res.json(results.slice(0, 20)); // only first 20 results
+  } catch (err) {
+    console.error("Search error:", err.message);
+    res.status(500).json({ error: "Search failed" });
   }
 });
 
-app.listen(PORT, () =>
-  console.log(`✅ API running on port ${PORT}`)
-);
+// 🎶 RECOMMEND API (auto-next)
+app.get("/recommend", async (req, res) => {
+  const mood = req.query.mood || "romantic"; // default mood romantic
+  try {
+    const response = await axios.get(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(mood + " songs playlist")}`
+    );
+    const html = response.data;
+    const $ = load(html);
+
+    let ytInitialData = null;
+    $("script").each((_, el) => {
+      const txt = $(el).html();
+      if (txt && txt.includes("var ytInitialData")) {
+        ytInitialData = txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
+      }
+    });
+
+    if (!ytInitialData) return res.json([]);
+
+    const data = JSON.parse(ytInitialData);
+    const items =
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
+
+    const results = [];
+    items.forEach((item) => {
+      if (item.videoRenderer) {
+        const v = item.videoRenderer;
+        const lengthText = v.lengthText?.simpleText || "0:00";
+        const [m, s] = lengthText.split(":").map(Number);
+        const durationSec = (m || 0) * 60 + (s || 0);
+
+        if (durationSec >= 60) {
+          results.push({
+            title: v.title?.runs?.[0]?.text || "",
+            videoId: v.videoId,
+            thumbnail: v.thumbnail?.thumbnails?.[0]?.url || "",
+          });
+        }
+      }
+    });
+
+    // shuffle & send back 10 songs
+    const shuffled = results.sort(() => 0.5 - Math.random());
+    res.json(shuffled.slice(0, 10));
+  } catch (err) {
+    console.error("Recommend error:", err.message);
+    res.status(500).json({ error: "Recommendation failed" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
