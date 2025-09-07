@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// 🔍 SEARCH API (lightweight)
+// 🔍 SEARCH API (lightweight, no audio yet)
 app.get("/search", async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: "Missing search query" });
@@ -43,7 +43,7 @@ app.get("/search", async (req, res) => {
         const [m, s] = lengthText.split(":").map(Number);
         const durationSec = (m || 0) * 60 + (s || 0);
 
-        // 🎵 Only real songs (not shorts)
+        // 🎵 Only include proper songs (skip shorts)
         if (durationSec >= 60) {
           results.push({
             title: v.title?.runs?.[0]?.text || "",
@@ -61,7 +61,7 @@ app.get("/search", async (req, res) => {
   }
 });
 
-// 🎧 AUDIO STREAM API (fetch only when needed)
+// 🎧 AUDIO STREAM API (fetch audio when needed)
 app.get("/audio/:videoId", async (req, res) => {
   const { videoId } = req.params;
   try {
@@ -71,8 +71,8 @@ app.get("/audio/:videoId", async (req, res) => {
     res.json({
       audioUrl: stream.url,
       title: ytInfo.video_details.title,
-      thumbnail: ytInfo.video_details.thumbnails[0].url,
-      channel: ytInfo.video_details.channel.name,
+      thumbnail: ytInfo.video_details.thumbnails[0]?.url || "",
+      channel: ytInfo.video_details.channel?.name || "Unknown Artist",
     });
   } catch (err) {
     console.error("Audio fetch error:", err.message);
