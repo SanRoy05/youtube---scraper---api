@@ -10,16 +10,16 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// 🔑 Load YouTube cookies (from cookies.json)
+// ✅ Load cookies for play-dl (to avoid quota / "unavailable" errors)
 try {
-  const cookies = JSON.parse(fs.readFileSync("./cookies.json"));
-  await play.setCookies(cookies.cookies);
-  console.log("✅ YouTube cookies loaded successfully.");
+  const cookies = JSON.parse(fs.readFileSync("./cookies.json", "utf-8"));
+  play.setCookies(cookies.cookies);
+  console.log("✅ Cookies loaded successfully");
 } catch (err) {
-  console.error("⚠️ Could not load cookies.json, play-dl may fail:", err.message);
+  console.warn("⚠️ Could not load cookies.json, play-dl may fail:", err.message);
 }
 
-// 🔍 SEARCH API
+// 🔍 SEARCH API (lightweight search only)
 app.get("/search", async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: "Missing search query" });
@@ -35,8 +35,7 @@ app.get("/search", async (req, res) => {
     $("script").each((_, el) => {
       const txt = $(el).html();
       if (txt && txt.includes("var ytInitialData")) {
-        ytInitialData =
-          txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
+        ytInitialData = txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
       }
     });
 
@@ -44,9 +43,7 @@ app.get("/search", async (req, res) => {
 
     const data = JSON.parse(ytInitialData);
     const items =
-      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-        ?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents ||
-      [];
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
 
     const results = [];
     items.forEach((item) => {
@@ -56,6 +53,7 @@ app.get("/search", async (req, res) => {
         const [m, s] = lengthText.split(":").map(Number);
         const durationSec = (m || 0) * 60 + (s || 0);
 
+        // 🎵 Only keep proper songs (longer than 60s)
         if (durationSec >= 60) {
           results.push({
             title: v.title?.runs?.[0]?.text || "",
@@ -73,13 +71,11 @@ app.get("/search", async (req, res) => {
   }
 });
 
-// 🎧 AUDIO STREAM API
+// 🎧 AUDIO STREAM API (fetch when needed)
 app.get("/audio/:videoId", async (req, res) => {
   const { videoId } = req.params;
   try {
-    const ytInfo = await play.video_info(
-      `https://www.youtube.com/watch?v=${videoId}`
-    );
+    const ytInfo = await play.video_info(`https://www.youtube.com/watch?v=${videoId}`);
     const stream = await play.stream_from_info(ytInfo, { quality: 2 }); // audio only
 
     res.json({
@@ -94,14 +90,12 @@ app.get("/audio/:videoId", async (req, res) => {
   }
 });
 
-// 🎶 RECOMMEND API
+// 🎶 RECOMMEND API (auto-next)
 app.get("/recommend", async (req, res) => {
-  const mood = req.query.mood || "romantic";
+  const mood = req.query.mood || "romantic"; // default mood romantic
   try {
     const response = await axios.get(
-      `https://www.youtube.com/results?search_query=${encodeURIComponent(
-        mood + " songs playlist"
-      )}`
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(mood + " songs playlist")}`
     );
     const html = response.data;
     const $ = load(html);
@@ -110,8 +104,7 @@ app.get("/recommend", async (req, res) => {
     $("script").each((_, el) => {
       const txt = $(el).html();
       if (txt && txt.includes("var ytInitialData")) {
-        ytInitialData =
-          txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
+        ytInitialData = txt.split("var ytInitialData = ")[1].split("};")[0] + "}";
       }
     });
 
@@ -119,9 +112,7 @@ app.get("/recommend", async (req, res) => {
 
     const data = JSON.parse(ytInitialData);
     const items =
-      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-        ?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents ||
-      [];
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
 
     const results = [];
     items.forEach((item) => {
@@ -141,6 +132,7 @@ app.get("/recommend", async (req, res) => {
       }
     });
 
+    // Shuffle & send 10 songs
     const shuffled = results.sort(() => 0.5 - Math.random());
     res.json(shuffled.slice(0, 10));
   } catch (err) {
